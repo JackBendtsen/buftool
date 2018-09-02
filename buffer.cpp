@@ -1,31 +1,9 @@
 #include "buftool.h"
 
-struct buffer {
-	std::string name;
-	u8 *buf = nullptr;
-	int size;
-
-	buffer(std::string *n, int sz = 0);
-	~buffer();
-
-	void checkup(void);
-	int available(int off, int& len);
-	int extend(int& off, int len);
-	void resize(int sz, bool init = true);
-
-	void copy(buffer& src, int dst_off = 0, int src_off = 0, int len = 0);
-	void fill(u8 byte = 0, int off = 0, int len = 0);
-	void patch(int off, std::vector<u8>& b);
-	void view(int off = 0, int len = 0);
-	//void search(); // search by regex & binary, create/update buffer of results
-	void load(std::string& file, int pos = 0, int len = 0, int off = 0);
-	void save(std::string& file, int pos = 0, int len = 0, int off = 0, bool insert = true);
-	int memacc(bool method, int pid, long addr, int len = 0, int off = 0);
-};
-
-buffer::buffer(std::string *n, int sz = 0) {
-	if (n == nullptr || sz < 1) return;
-	name = *n;
+buffer::buffer(std::string& n, int sz) {
+	name = n;
+	buf = nullptr;
+	size = 0;
 	if (sz > 0)
 		resize(sz);
 }
@@ -132,9 +110,11 @@ void buffer::patch(int off, std::vector<u8>& b) {
 		buf[off+i] = b[i];
 }
 
-void buffer::print(int off, std::string msg) {
-	if (extend(off, msg.size()) > 0)
-		strpcy(buf + off, msg.c_str());
+void buffer::print(int off, std::string& msg) {
+	if (extend(off, msg.size()) > 0) {
+		char *p = (char*)(buf+off);
+		for (auto c:msg) *p++ = c;
+	}
 }
 
 void buffer::view(int off, int len) {
@@ -153,18 +133,19 @@ void buffer::view(int off, int len) {
 				          << pos+i << " | ";
 
 			// print the byte as 2 characters, lower case, no prefix (eg. 0a)
-			std::cout << std::hex << std::setfill('0') << std::setw(2) <<
-			          << buf[pos+i] << " ";
+			std::cout << std::hex << std::setfill('0') << std::setw(2)
+			          << (int)buf[pos+i] << " ";
 
-			// at each quarter of the row, print a little spacing
+			// at each quarter of the row, print a divider
 			if (i % 4 == 3 && i != row-1)
 				std::cout << "- ";
 		}
 
 		if (row < 16) {
 			// (2 + 1) represents the space taken by each printed byte
-			int sp = 56 - (row * (2 + 1)); 
-			std::cout << std::setw(sp) << std::setfill(' ');
+			int sp = 56 - (row * (2 + 1));
+			int divs = (row - 1) / 4; // multiplied by 2, as 2 == strlen("- ")
+			std::cout << std::setw(sp - (divs * 2)) << std::setfill(' ');
 		}
 
 		std::cout << "| ";
@@ -178,6 +159,9 @@ void buffer::view(int off, int len) {
 		}
 
 		std::cout << "\n";
+
+		left -= row;
+		pos += row;
 	}
 
 	std::cout << "\n";
@@ -204,10 +188,10 @@ void buffer::load(std::string& file, int pos, int len, int off) {
 	}
 
 	int space = file_sz - pos;
-	int read_sz = len < space ? len : space;
-
 	if (len <= 0)
 		len = space;
+
+	int read_sz = len < space ? len : space;
 
 	if (extend(off, len) <= 0) {
 		in.close();
@@ -257,7 +241,7 @@ void buffer::save(std::string& file, int pos, int len, int off, bool insert) {
 		return;
 	}
 
-	std::string b(file_sz);
+	std::string b(file_sz, '\0');
 	in.seekg(in.beg);
 	in.read(&b[0], file_sz);
 	in.close();
@@ -323,7 +307,7 @@ int open_process(int pid, int mode) {
 		return -2;
 	}
 
-	if (!err && waitpid(pid, NULL, 0) != pid) {
+	if (waitpid(pid, NULL, 0) != pid) {
 		perror("Could not wait for process"); // Too excited
 		close(proc);
 		return -3;
